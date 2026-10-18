@@ -46,6 +46,21 @@ uv run uvicorn repair_ai.main:app --reload
 
 Interactive API docs: <http://127.0.0.1:8000/docs>
 
+## Web UI
+
+A small PoC UI is served by the same app at `/` — static files in `ui/`,
+Alpine.js from a pinned CDN, no build step. Open <http://127.0.0.1:8000/>
+locally, or the Render service URL when deployed.
+
+Paste the same `REPAIR_AI_API_KEY` into the key field; it is stored only in
+the browser's localStorage and sent as the `X-API-Key` header. The static
+files themselves are public; the generation endpoint stays API-key protected.
+On Render's free tier, the first generation after idle time may take up to a
+minute while the service wakes — the UI shows a hint when this happens.
+
+The UI is a convenience for trying the service. Approval, editing, and
+rejection stay in the SAP review workflow.
+
 Health endpoints (no authentication, no LLM call): `GET /health/live` and
 `GET /health/ready`.
 

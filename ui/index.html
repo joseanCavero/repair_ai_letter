@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Repair AI — Description Generator</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+  <!-- Alpine must load AFTER app.js: it starts via queueMicrotask, so the
+       alpine:init listener in app.js has to be registered first. -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"
+    integrity="sha384-l8f0VcPi/M1iHPv8egOnY/15TDwqgbOR1anMIJWvU6nLRgZVLTLSaNqi/TOoT5Fh"
+    crossorigin="anonymous"
+    defer
+  ></script>
+</head>
+<body x-data="repairForm" x-cloak>
+  <main class="container">
+    <header>
+      <h1>Repair AI</h1>
+      <p class="subtitle">
+        Generate a customer-facing repair description from structured repair data.
+      </p>
+      <p class="notice">
+        Generated text is a draft — human review is required before it is used in
+        a customer offer or printed.
+      </p>
+    </header>
+
+    <section class="card">
+      <h2>API key</h2>
+      <label for="api-key">Service API key (sent as <code>X-API-Key</code>)</label>
+      <input
+        id="api-key"
+        type="password"
+        x-model="apiKey"
+        placeholder="Paste your API key"
+        autocomplete="off"
+      >
+      <p class="hint">
+        Stored only in your browser's localStorage. Required to generate.
+      </p>
+    </section>
+
+    <form class="card" x-on:submit.prevent="submit">
+      <h2>Repair data</h2>
+
+      <div class="grid">
+        <div>
+          <label for="repair-type">Repair type</label>
+          <select id="repair-type" x-model="form.repair_type">
+            <option value="component_repair">component_repair</option>
+            <option value="component_replacement">component_replacement</option>
+            <option value="inspection">inspection</option>
+            <option value="maintenance">maintenance</option>
+          </select>
+        </div>
+        <div>
+          <label for="language">Language</label>
+          <select id="language" x-model="form.language">
+            <option value="en">en</option>
+            <option value="de">de</option>
+            <option value="es">es</option>
+          </select>
+        </div>
+        <div>
+          <label for="style">Style</label>
+          <select id="style" x-model="form.style">
+            <option value="professional_customer_facing">professional</option>
+            <option value="concise_customer_facing">concise</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="equipment">Equipment type</label>
+      <input
+        id="equipment"
+        type="text"
+        x-model="form.equipment"
+        maxlength="150"
+        placeholder="e.g. Hydraulic pump"
+        required
+      >
+
+      <fieldset>
+        <legend>Findings</legend>
+        <template x-for="row in form.findings" :key="row.key">
+          <div class="row">
+            <input type="text" x-model="row.code" placeholder="Code (optional)">
+            <input
+              type="text"
+              class="grow"
+              x-model="row.description"
+              placeholder="Description"
+              maxlength="1000"
+            >
+            <button
+              type="button"
+              class="link-danger"
+              x-on:click="removeRow('findings', row.key)"
+            >Remove</button>
+          </div>
+        </template>
+        <button type="button" class="secondary" x-on:click="addRow('findings')">
+          + Add finding
+        </button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Operations</legend>
+        <template x-for="row in form.operations" :key="row.key">
+          <div class="row">
+            <input type="text" x-model="row.code" placeholder="Code (optional)">
+            <input
+              type="text"
+              class="grow"
+              x-model="row.description"
+              placeholder="Description"
+              maxlength="500"
+            >
+            <select x-model="row.status">
+              <option value="proposed">proposed</option>
+              <option value="completed">completed</option>
+            </select>
+            <button
+              type="button"
+              class="link-danger"
+              x-on:click="removeRow('operations', row.key)"
+            >Remove</button>
+          </div>
+        </template>
+        <button type="button" class="secondary" x-on:click="addRow('operations')">
+          + Add operation
+        </button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Materials</legend>
+        <template x-for="row in form.materials" :key="row.key">
+          <div class="row">
+            <input
+              type="text"
+              x-model="row.material_id"
+              placeholder="Material ID (optional)"
+            >
+            <input
+              type="text"
+              class="grow"
+              x-model="row.description"
+              placeholder="Description"
+              maxlength="200"
+            >
+            <input
+              type="number"
+              class="qty"
+              x-model="row.quantity"
+              min="0"
+              step="any"
+              placeholder="Qty"
+            >
+            <input
+              type="text"
+              class="unit"
+              x-model="row.unit"
+              placeholder="Unit"
+              maxlength="20"
+            >
+            <button
+              type="button"
+              class="link-danger"
+              x-on:click="removeRow('materials', row.key)"
+            >Remove</button>
+          </div>
+        </template>
+        <button type="button" class="secondary" x-on:click="addRow('materials')">
+          + Add material
+        </button>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" class="primary" :disabled="submitting || !apiKey">
+          <span x-show="!submitting">Generate description</span>
+          <span x-show="submitting">Generating…</span>
+        </button>
+        <p class="hint" x-show="slowHint">
+          Still waiting — the service may be waking up (cold start). This can
+          take up to a minute.
+        </p>
+      </div>
+    </form>
+
+    <section class="card" x-show="result || error">
+      <h2>Result</h2>
+
+      <template x-if="error">
+        <div class="error-box">
+          <strong x-text="error.title"></strong>
+          <p x-text="error.message"></p>
+          <ul x-show="error.details.length > 0">
+            <template x-for="(detail, i) in error.details" :key="i">
+              <li x-text="detail"></li>
+            </template>
+          </ul>
+        </div>
+      </template>
+
+      <template x-if="result">
+        <div>
+          <p>
+            <span class="badge" :class="result.status" x-text="result.status"></span>
+          </p>
+
+          <template x-if="result.description">
+            <div class="draft" x-text="result.description"></div>
+          </template>
+
+          <template x-if="result.reason">
+            <p class="reason" x-text="result.reason"></p>
+          </template>
+
+          <template x-if="result.generation">
+            <dl class="meta">
+              <div><dt>Model</dt><dd x-text="result.generation.model_version"></dd></div>
+              <div><dt>Prompt</dt><dd x-text="result.generation.prompt_version"></dd></div>
+              <div>
+                <dt>Validation</dt>
+                <dd x-text="result.generation.validation_status"></dd>
+              </div>
+            </dl>
+          </template>
+
+          <p class="hint" x-show="result.request_id">
+            Request ID: <code x-text="result.request_id"></code>
+          </p>
+        </div>
+      </template>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,10 +1,12 @@
 """FastAPI application entry point."""
 
 import logging
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from repair_ai.api.endpoints import health
@@ -32,6 +34,9 @@ def load_environment(dotenv_path: str | None = None) -> None:
 
 
 load_environment()
+
+#: Static PoC UI served from the repository root (``ui/`` next to ``src/``).
+UI_DIR = Path(__file__).resolve().parents[2] / "ui"
 
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
@@ -63,6 +68,9 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(api_router)
+    # Mounted last so /v1, /health and /docs keep precedence. The UI contains
+    # no secrets; the generation endpoint remains API-key protected.
+    app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
 
     @app.exception_handler(GenerationProviderError)
     async def handle_provider_error(

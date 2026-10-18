@@ -29,6 +29,8 @@ Draft response to Postman (not approved for printing)
 
 Render hosts the API. OpenAI remains the model provider for the first deployment. The service remains stateless; no database or approval workflow is added.
 
+The service also serves a small static PoC UI at `/` (files in `ui/`, shipped in the same repository). It needs no additional Render configuration: the existing build and start commands serve it automatically, and the generation endpoint remains API-key protected.
+
 ## 2. Assumptions to verify
 
 The supplied README describes Python 3.12, `uv`, `repair_ai.main:app`, `POST /v1/repair-descriptions`, and these settings:
@@ -166,6 +168,7 @@ Use the actual HTTPS service URL shown by Render. Do not assume or invent a URL 
 3. Open `/docs` if interactive documentation is enabled and appropriate for the PoC.
 4. Send an authenticated request to `POST /v1/repair-descriptions` using a synthetic example based on the README.
 5. Confirm the response is a draft and that `status: "generated"` is not interpreted as approval to print.
+6. Open the service root (`/`) in a browser, confirm the static UI loads, paste the API key, and generate a draft from the synthetic example.
 
 Example request body:
 
