@@ -10,13 +10,18 @@ from fastapi.testclient import TestClient
 from repair_ai.api.endpoints.repair_descriptions import (
     get_repair_description_service,
 )
-from repair_ai.core.config import Settings
+from repair_ai.core.config import Settings, get_settings
 from repair_ai.core.exceptions import GenerationProviderError
 from repair_ai.main import create_app
 from repair_ai.schemas.generation import GenerationStatus, LLMGenerationOutput
 from repair_ai.services.repair_description_service import RepairDescriptionService
 from repair_ai.validation.output_validator import RepairOutputValidator
 from tests.conftest import sample_payload
+
+TEST_API_KEY = "test-api-key-for-integration-tests"
+AUTH_HEADERS = {"X-API-Key": TEST_API_KEY}
+
+URL = "/v1/repair-descriptions"
 
 
 class FakeGenerator:
@@ -42,7 +47,9 @@ GENERATED_OK = LLMGenerationOutput(
 )
 
 
-def make_client(generator: FakeGenerator) -> TestClient:
+def make_client(
+    generator: FakeGenerator, settings: Settings | None = None
+) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_repair_description_service] = (
         lambda: RepairDescriptionService(
@@ -50,6 +57,9 @@ def make_client(generator: FakeGenerator) -> TestClient:
             validator=RepairOutputValidator(),
             settings=Settings(),
         )
+    )
+    app.dependency_overrides[get_settings] = lambda: (
+        settings if settings is not None else Settings(api_key=TEST_API_KEY)
     )
     return TestClient(app)
 
@@ -59,11 +69,8 @@ def client() -> TestClient:
     return make_client(FakeGenerator(output=GENERATED_OK))
 
 
-URL = "/v1/repair-descriptions"
-
-
 def test_generated_response_shape(client):
-    response = client.post(URL, json=sample_payload())
+    response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -80,7 +87,7 @@ def test_all_empty_lists_return_structured_insufficient_data():
     client = make_client(generator)
     payload = sample_payload() | {"findings": [], "operations": [], "materials": []}
 
-    response = client.post(URL, json=payload)
+    response = client.post(URL, json=payload, headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -98,7 +105,7 @@ def test_llm_abstention_is_returned_as_business_outcome():
     )
     client = make_client(FakeGenerator(output=abstention))
 
-    response = client.post(URL, json=sample_payload())
+    response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -118,7 +125,7 @@ def test_llm_abstention_is_returned_as_business_outcome():
 def test_malformed_requests_return_422(client, mutate):
     payload = sample_payload()
     mutate(payload)
-    response = client.post(URL, json=payload)
+    response = client.post(URL, json=payload, headers=AUTH_HEADERS)
     assert response.status_code == 422
 
 
@@ -126,7 +133,7 @@ def test_provider_failure_maps_to_502_with_sanitized_detail():
     client = make_client(
         FakeGenerator(exc=GenerationProviderError("provider down"))
     )
-    response = client.post(URL, json=sample_payload())
+    response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
 
     assert response.status_code == 502
     detail = response.json()["detail"]
@@ -140,8 +147,49 @@ def test_validation_failure_maps_to_500_and_discards_draft():
         description="All repairs are guaranteed forever.",
     )
     client = make_client(FakeGenerator(output=bad))
-    response = client.post(URL, json=sample_payload())
+    response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
 
     assert response.status_code == 500
     body = response.json()
     assert "guaranteed forever" not in str(body)
+
+
+class TestApiKeyAuthentication:
+    def test_missing_api_key_returns_401(self, client):
+        response = client.post(URL, json=sample_payload())
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Missing API key."
+
+    def test_invalid_api_key_returns_403(self, client):
+        response = client.post(
+            URL, json=sample_payload(), headers={"X-API-Key": "wrong-key"}
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Invalid API key."
+
+    def test_unconfigured_auth_fails_closed_with_503(self):
+        client = make_client(
+            FakeGenerator(output=GENERATED_OK), settings=Settings(api_key=None)
+        )
+        response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 503
+
+    def test_valid_api_key_is_accepted(self, client):
+        response = client.post(URL, json=sample_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 200
+
+
+def test_oversized_request_body_returns_413(monkeypatch):
+    monkeypatch.setenv("REPAIR_AI_MAX_REQUEST_BODY_BYTES", "1024")
+    get_settings.cache_clear()
+    try:
+        client = make_client(FakeGenerator(output=GENERATED_OK))
+        response = client.post(
+            URL,
+            content=b" " * 2000,
+            headers={**AUTH_HEADERS, "Content-Type": "application/json"},
+        )
+        assert response.status_code == 413
+        assert response.json()["detail"] == "Request body too large."
+    finally:
+        get_settings.cache_clear()

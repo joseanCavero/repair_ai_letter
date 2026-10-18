@@ -46,11 +46,28 @@ uv run uvicorn repair_ai.main:app --reload
 
 Interactive API docs: <http://127.0.0.1:8000/docs>
 
+Health endpoints (no authentication, no LLM call): `GET /health/live` and
+`GET /health/ready`.
+
+## Authentication
+
+The generation endpoint requires an `X-API-Key` header matching the
+`REPAIR_AI_API_KEY` environment variable. Generate a key with:
+
+```bash
+uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+If `REPAIR_AI_API_KEY` is not configured, the endpoint fails closed with
+`503`. Missing header → `401`; wrong key → `403`. Keys are compared in
+constant time and never logged. This is a lightweight single-user PoC
+measure, not a substitute for enterprise identity and authorization.
+
 ## Test the endpoint (Postman or curl)
 
 - **Method:** `POST`
 - **URL:** `http://127.0.0.1:8000/v1/repair-descriptions`
-- **Header:** `Content-Type: application/json`
+- **Headers:** `Content-Type: application/json`, `X-API-Key: <your service API key>`
 - **Body:**
 
 ```json
@@ -85,9 +102,13 @@ Supported languages: `en`, `de`, `es`. Supported styles:
 |---|---|---|
 | Draft generated | `200` | `status: "generated"` + description + generation metadata |
 | Insufficient facts (e.g. all lists empty) | `200` | `status: "insufficient_data"` + reason |
+| Missing `X-API-Key` header | `401` | `detail: "Missing API key."` |
+| Wrong API key | `403` | `detail: "Invalid API key."` |
+| Request body over 256 KiB | `413` | sanitized message |
 | Malformed request | `422` | FastAPI/Pydantic validation errors |
 | Model provider failure | `502` | sanitized message, retry/fallback guidance |
 | Draft failed output validation | `500` | sanitized message; the rejected draft is never returned |
+| `REPAIR_AI_API_KEY` not configured | `503` | fail-closed: authentication not configured |
 
 HTTP status codes are kept distinct from business statuses so clients can
 tell invalid input, insufficient facts, and infrastructure failures apart.
@@ -130,9 +151,32 @@ Environment variables (see `.env.example`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | — | OpenAI credential (read by langchain-openai) |
+| `REPAIR_AI_API_KEY` | — (fail closed) | API key required in the `X-API-Key` header |
 | `REPAIR_AI_MODEL_NAME` | `gpt-4o-mini` | Chat model for generation |
 | `REPAIR_AI_MODEL_TEMPERATURE` | `0` | Deterministic output |
+| `REPAIR_AI_MODEL_TIMEOUT_SECONDS` | `30` | Model-call timeout |
+| `REPAIR_AI_MODEL_MAX_RETRIES` | `1` | Bounded model retries (max 2 billable attempts) |
+| `REPAIR_AI_MODEL_MAX_OUTPUT_TOKENS` | `800` | Output-token cap |
+| `REPAIR_AI_MAX_REQUEST_BODY_BYTES` | `262144` | Request-body size limit (256 KiB) |
 
 `.env` is loaded into the process environment automatically at application
 startup (`repair_ai.main.load_environment`); real environment variables take
 precedence over `.env` values. Never commit `.env`.
+
+## Deploy to Render
+
+The service deploys as a Render **Web Service** connected to this repository:
+
+| Setting | Value |
+|---|---|
+| Build command | `pip install uv==0.11.26 && uv sync --frozen --no-dev` |
+| Start command | `uv run --no-sync uvicorn repair_ai.main:app --host 0.0.0.0 --port $PORT` |
+| Health check path | `/health/ready` |
+
+Configure `OPENAI_API_KEY`, `REPAIR_AI_API_KEY`, `REPAIR_AI_MODEL_NAME`, and
+`REPAIR_AI_MODEL_TEMPERATURE` as secrets in the Render dashboard — never in
+the repository. CI (`.github/workflows/ci.yml`) runs the test suite on every
+push and pull request. See `render_deployment_plan.md` for the full
+deployment, smoke-test, and rollback checklist.
+
+Use only synthetic or anonymized repair data with a personal deployment.

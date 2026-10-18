@@ -5,8 +5,11 @@ import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from repair_ai.api.endpoints import health
 from repair_ai.api.router import api_router
+from repair_ai.core.config import get_settings
 from repair_ai.core.exceptions import (
     GenerationProviderError,
     OutputValidationError,
@@ -31,8 +34,34 @@ def load_environment(dotenv_path: str | None = None) -> None:
 load_environment()
 
 
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    """Rejects requests whose declared body exceeds a configured limit.
+
+    This is a lightweight first line of defense; the Pydantic contracts
+    remain the authoritative validation of body content.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        super().__init__(app)
+        self._max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None and int(content_length) > self._max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large."},
+            )
+        return await call_next(request)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Repair AI Service", version="0.1.0")
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=get_settings().max_request_body_bytes,
+    )
+    app.include_router(health.router)
     app.include_router(api_router)
 
     @app.exception_handler(GenerationProviderError)

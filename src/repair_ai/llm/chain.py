@@ -34,6 +34,9 @@ class LangChainGenerator:
             model = ChatOpenAI(
                 model=self._settings.model_name,
                 temperature=self._settings.model_temperature,
+                timeout=self._settings.model_timeout_seconds,
+                max_retries=self._settings.model_max_retries,
+                max_tokens=self._settings.model_max_output_tokens,
             )
             self._chain = prompt | model.with_structured_output(
                 LLMGenerationOutput

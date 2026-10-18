@@ -8,6 +8,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends
 
+from repair_ai.api.security import require_api_key
 from repair_ai.core.config import get_settings
 from repair_ai.llm.chain import LangChainGenerator
 from repair_ai.schemas.generation import RepairDescriptionResponse
@@ -33,7 +34,11 @@ def get_repair_description_service() -> RepairDescriptionService:
     )
 
 
-@router.post("/repair-descriptions", response_model=RepairDescriptionResponse)
+@router.post(
+    "/repair-descriptions",
+    response_model=RepairDescriptionResponse,
+    dependencies=[Depends(require_api_key)],
+)
 def create_repair_description(
     request: RepairDescriptionRequest,
     service: RepairDescriptionService = Depends(get_repair_description_service),
